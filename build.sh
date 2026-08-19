@@ -20,15 +20,13 @@ swiftc -O -target arm64-apple-macosx14.0 \
 swiftc -O -target arm64-apple-macosx14.0 -framework AppKit -o "$APP/Contents/MacOS/NookSpacer" NookSpacer.swift
 echo "built $(du -h "$APP/Contents/MacOS/Nook" | cut -f1) + spacer helper"
 
-# Icon: assets/icon/make-icon.swift draws the 1024 PNG (regenerable, gitignored), iconutil wants every size.
-SRC=assets/icon/nook-1024.png
-[ -f "$SRC" ] || (cd assets/icon && swift make-icon.swift >/dev/null)
-mkdir -p "$APP/Contents/Resources" build/nook.iconset
-for s in 16 32 64 128 256 512; do
-  sips -z $s $s "$SRC" --out "build/nook.iconset/icon_${s}x${s}.png" >/dev/null
-  sips -z $((s*2)) $((s*2)) "$SRC" --out "build/nook.iconset/icon_${s}x${s}@2x.png" >/dev/null
-done
-iconutil -c icns build/nook.iconset -o "$APP/Contents/Resources/Nook.icns" && rm -rf build/nook.iconset && echo "icon"
+# Icon: assets/icon/make-icon.swift draws the glyph PNG (regenerable, gitignored); assets/icon/Nook.icon is the
+# Icon Composer package (tracked); actool (Xcode 26) compiles it to Assets.car + a legacy icns. Tahoe's Settings
+# panes only show icons that come from Assets.car - a plain .icns stays the pale placeholder there.
+[ -f assets/icon/Nook.icon/Assets/glyph.png ] || (cd assets/icon && swift make-icon.swift >/dev/null)
+mkdir -p "$APP/Contents/Resources"
+xcrun actool assets/icon/Nook.icon --compile "$APP/Contents/Resources" --app-icon Nook --include-all-app-icons \
+  --platform macosx --minimum-deployment-target 26.0 --output-partial-info-plist build/icon.plist >/dev/null 2>&1 && echo "icon"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -39,6 +37,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleIdentifier</key><string>com.justaicode.nook</string>
   <key>CFBundleExecutable</key><string>Nook</string>
   <key>CFBundleIconFile</key><string>Nook</string>
+  <key>CFBundleIconName</key><string>Nook</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>CFBundleVersion</key><string>1</string>

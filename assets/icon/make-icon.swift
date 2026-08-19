@@ -23,3 +23,15 @@ img.unlockFocus()
 let rep = NSBitmapImageRep(data: img.tiffRepresentation!)!
 try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "nook-1024.png"))
 print("wrote nook-1024.png")
+
+// Tahoe: the same glyph alone, white on transparent, for the Icon Composer layer (Nook.icon/Assets/glyph.png)
+let g = NSImage(size: NSSize(width: S, height: S))
+g.lockFocus()
+if let sym = NSImage(systemSymbolName: "arrow.left.and.right.text.vertical", accessibilityDescription: nil)?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 520, weight: .medium)) {
+    let white = NSImage(size: sym.size, flipped: false) { r in sym.draw(in: r); NSColor.white.set(); r.fill(using: .sourceAtop); return true }
+    white.draw(in: NSRect(x: (S - sym.size.width)/2, y: (S - sym.size.height)/2, width: sym.size.width, height: sym.size.height))
+}
+g.unlockFocus()
+try! FileManager.default.createDirectory(atPath: "Nook.icon/Assets", withIntermediateDirectories: true)
+try! NSBitmapImageRep(data: g.tiffRepresentation!)!.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "Nook.icon/Assets/glyph.png"))
+print("wrote Nook.icon/Assets/glyph.png")
