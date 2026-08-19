@@ -43,10 +43,12 @@ enum Shell {
         Shell.run("/usr/bin/killall", "ControlCenter")     // Apple's icons re-read it now
     }
 
-    // Apps that own a menu-bar icon, via Accessibility. Apple's agents are left alone except the keyboard "A".
+    // Background utilities (no Dock icon) that own a menu-bar icon, via Accessibility. Regular apps - the ones with
+    // your work in them - are never touched; Apple's agents neither.
     func iconApps() -> [NSRunningApplication] {
         NSWorkspace.shared.runningApplications.filter { app in
-            guard app.processIdentifier != getpid(), !(app.bundleIdentifier ?? "").hasPrefix("com.apple.") else { return false }
+            guard app.processIdentifier != getpid(), app.activationPolicy != .regular,
+                  !(app.bundleIdentifier ?? "").hasPrefix("com.apple.") else { return false }
             let el = AXUIElementCreateApplication(app.processIdentifier); AXUIElementSetMessagingTimeout(el, 0.2)
             var bar: AnyObject?, kids: AnyObject?
             guard AXUIElementCopyAttributeValue(el, kAXExtrasMenuBarAttribute as CFString, &bar) == .success, let b = bar,
@@ -79,9 +81,14 @@ enum Shell {
         Shell.run("/usr/bin/killall", "ControlCenter")
     }
 
-    @objc func relaunch() {
+    @objc func relaunchOne(_ m: NSMenuItem) {
+        guard let app = NSRunningApplication(processIdentifier: pid_t(m.tag)) else { return }
+        relaunch([app])
+    }
+    @objc func relaunchAll() { relaunch(iconApps()) }
+    func relaunch(_ apps: [NSRunningApplication]) {
         Task { @MainActor in
-            for app in iconApps() {
+            for app in apps {
                 guard let url = app.bundleURL, let bid = app.bundleIdentifier else { continue }
                 app.terminate()
                 for _ in 0..<20 where !app.isTerminated { try? await Task.sleep(for: .milliseconds(250)) }
@@ -94,9 +101,9 @@ enum Shell {
                     _ = try? await NSWorkspace.shared.openApplication(at: url, configuration: c)
                 }
             }
-            Shell.run("/usr/bin/killall", "TextInputMenuAgent")   // the keyboard "A"; launchd brings it back
         }
     }
+    @objc func relaunchKeyboard() { Shell.run("/usr/bin/killall", "TextInputMenuAgent") }   // the "A"; launchd brings it back
 }
 
 extension App: NSMenuDelegate {
@@ -111,9 +118,16 @@ extension App: NSMenuDelegate {
         let sys = NSMenuItem(title: "System default", action: #selector(pick(_:)), keyEquivalent: ""); sys.target = self; sys.tag = -1
         sys.state = cur == nil ? .on : .off; menu.addItem(sys)
         menu.addItem(.separator())
-        let r = NSMenuItem(title: "Relaunch icon apps", action: #selector(relaunch), keyEquivalent: ""); r.target = self
-        r.toolTip = "Third-party icons only pick the gap up when their app restarts. Quits and reopens them."
-        menu.addItem(r)
+        // Third-party icons only pick the gap up when their app restarts. Menu-bar utilities only, one at a time or all.
+        let rs = NSMenu()
+        for app in iconApps().sorted(by: { ($0.localizedName ?? "") < ($1.localizedName ?? "") }) {
+            let a = NSMenuItem(title: app.localizedName ?? "?", action: #selector(relaunchOne(_:)), keyEquivalent: ""); a.target = self
+            a.tag = Int(app.processIdentifier); a.image = app.icon; a.image?.size = NSSize(width: 16, height: 16); rs.addItem(a)
+        }
+        rs.addItem(withTitle: "Keyboard input menu (A)", action: #selector(relaunchKeyboard), keyEquivalent: "").target = self
+        rs.addItem(.separator())
+        rs.addItem(withTitle: "All of the above", action: #selector(relaunchAll), keyEquivalent: "").target = self
+        let r = NSMenuItem(title: "Relaunch a menu-bar utility", action: nil, keyEquivalent: ""); r.submenu = rs; menu.addItem(r)
         menu.addItem(.separator())
         let shown = shownAppleNames()
         let sub = NSMenu()
