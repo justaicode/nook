@@ -415,14 +415,14 @@ final class Panel: NSPanel {
             await snapshot(); collapse(); busy = false
         }
     }
-    // Spacing of the REAL bar: two hidden global defaults macOS reads at login. 0 = system default (about 16).
+    // Spacing of the REAL bar: two hidden global defaults. 0..16 pt; unset = system (about 16). Linear all the way down.
     @Published var barGap: Double = {
         let v = Bar.shell("/usr/bin/defaults", "-currentHost", "read", "-globalDomain", "NSStatusItemSpacing").trimmingCharacters(in: .whitespacesAndNewlines)
-        return Double(v) ?? 0
+        return Double(v) ?? -1      // -1 = not set = system default (about 16)
     }() {
         didSet {
             for k in ["NSStatusItemSpacing", "NSStatusItemSelectionPadding"] {
-                if barGap == 0 { Bar.shell("/usr/bin/defaults", "-currentHost", "delete", "-globalDomain", k) }
+                if barGap < 0 { Bar.shell("/usr/bin/defaults", "-currentHost", "delete", "-globalDomain", k) }
                 else { Bar.shell("/usr/bin/defaults", "-currentHost", "write", "-globalDomain", k, "-int", String(Int(barGap))) }
             }
             // Restarting Control Centre re-reads it for Apple's icons at once; third-party icons follow at their next launch / your next login.
@@ -496,8 +496,9 @@ struct SettingsView: View {
             Divider().padding(.vertical, 8)
             HStack {
                 Text("Bar spacing").foregroundStyle(.secondary)
-                Slider(value: $draft, in: 0...16, step: 1, onEditingChanged: { if !$0 { app.barGap = draft } }).frame(width: 140)
-                Text(draft == 0 ? "system" : "\(Int(draft)) pt").frame(width: 50, alignment: .leading)
+                Slider(value: Binding(get: { max(0, draft) }, set: { draft = $0 }), in: 0...16, step: 1, onEditingChanged: { if !$0 { app.barGap = draft } }).frame(width: 140)
+                Text(draft < 0 ? "system" : "\(Int(draft)) pt").frame(width: 50, alignment: .leading)
+                Button("System") { draft = -1; app.barGap = -1 }.font(.caption)
                 Spacer()
                 Text("Apple icons: now · others: after log out/in").font(.caption).foregroundStyle(.secondary)
             }.padding(.bottom, 6)
