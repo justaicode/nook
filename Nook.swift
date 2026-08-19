@@ -37,6 +37,7 @@ enum Shell {
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(2))
             parkedCheck()
+            Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in Task { @MainActor in self?.parkedCheck() } }
             let line = "[\(Date())] nook visible=\(item.isVisible) frame=\(item.button?.window?.frame ?? .zero) len=\(item.length) spacers=\(spacers.map { "\($0.isVisible) \($0.button?.window?.frame ?? .zero)" })\n"
             let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Nook.log")
             if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); h.closeFile() } else { try? line.write(to: url, atomically: true, encoding: .utf8) }
@@ -103,11 +104,15 @@ enum Shell {
 
     // macOS 26 hides an app's icons system-wide when one is dragged down out of the bar; the window then sits at y < 0.
     // Nothing in a plist to flip, so tell him where the switch is.
+    var warned = false
     func parkedCheck() {
-        guard (item.button?.window?.frame.minY ?? 0) < 0 else { return }
+        let parked = (item.button?.window?.frame.minY ?? 0) < 0
+        if !parked { warned = false; return }
+        if warned { return }
+        warned = true
         let a = NSAlert()
         a.messageText = "Nook's icon is hidden by macOS"
-        a.informativeText = "It gets hidden when an icon is dragged down out of the menu bar. Turn it back on under System Settings → Menu Bar → Nook. Nook stays running; no relaunch needed."
+        a.informativeText = "macOS hides an app's icons when one of them is dragged down out of the menu bar. Turn Nook back on under System Settings → Menu Bar. To remove a spacer, use Nook's menu instead of dragging."
         a.addButton(withTitle: "Open System Settings"); a.addButton(withTitle: "Later")
         NSApp.activate(ignoringOtherApps: true)
         if a.runModal() == .alertFirstButtonReturn {
