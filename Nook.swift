@@ -111,10 +111,12 @@ enum Bar {
         return list.contains { ($0[kCGWindowLayer as String] as? Int) == 24 && ($0[kCGWindowName as String] as? String) == "Menubar" }
     }
 
-    private static func post(_ t: CGEventType, _ p: CGPoint, cmd: Bool) {
+    static var ccPid: pid_t? { NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.controlcenter").first?.processIdentifier }
+    // pid == nil: system-wide (moves the real cursor). pid set: delivered to that process only, cursor stays put.
+    private static func post(_ t: CGEventType, _ p: CGPoint, cmd: Bool, pid: pid_t? = nil) {
         let e = CGEvent(mouseEventSource: CGEventSource(stateID: .hidSystemState), mouseType: t, mouseCursorPosition: p, mouseButton: .left)!
         if cmd { e.flags = .maskCommand }
-        e.post(tap: .cghidEventTap)
+        if let pid { e.postToPid(pid) } else { e.post(tap: .cghidEventTap) }
     }
     static func click(_ p: CGPoint) {
         post(.mouseMoved, p, cmd: false); usleep(40_000)
@@ -122,17 +124,18 @@ enum Bar {
         post(.leftMouseUp, p, cmd: false)
     }
     // Cmd-drag is how a human reorders status items; we do the same, then put the cursor back.
-    static func cmdDrag(from a: CGPoint, to b: CGPoint) {
+    static func cmdDrag(from a: CGPoint, to b: CGPoint, pid: pid_t?) {
         let cursor = CGEvent(source: nil)?.location ?? a
-        post(.mouseMoved, a, cmd: true); usleep(60_000)
-        post(.leftMouseDown, a, cmd: true); usleep(120_000)
+        if pid == nil { CGDisplayHideCursor(CGMainDisplayID()) }
+        post(.mouseMoved, a, cmd: true, pid: pid); usleep(60_000)
+        post(.leftMouseDown, a, cmd: true, pid: pid); usleep(120_000)
         for i in 1...12 {
             let t = CGFloat(i) / 12
-            post(.leftMouseDragged, CGPoint(x: a.x + (b.x - a.x) * t, y: a.y), cmd: true); usleep(25_000)
+            post(.leftMouseDragged, CGPoint(x: a.x + (b.x - a.x) * t, y: a.y), cmd: true, pid: pid); usleep(25_000)
         }
         usleep(120_000)
-        post(.leftMouseUp, b, cmd: true); usleep(60_000)
-        CGWarpMouseCursorPosition(cursor)
+        post(.leftMouseUp, b, cmd: true, pid: pid); usleep(60_000)
+        if pid == nil { CGWarpMouseCursorPosition(cursor); CGDisplayShowCursor(CGMainDisplayID()) }
     }
 
     @discardableResult static func shell(_ args: String...) -> String {
@@ -401,6 +404,7 @@ final class Panel: NSPanel {
             guard !busy else { return }
             busy = true; expand()
             try? await Task.sleep(for: .milliseconds(400))
+            var tries: [String: Int] = [:]
             for _ in 0..<12 {
                 let now = Bar.items()
                 let sx = spacer.button?.window?.frame.minX ?? 0, tx = toggle.button?.window?.frame.maxX ?? 0
@@ -409,7 +413,10 @@ final class Panel: NSPanel {
                     return (want == "panel") != (i.frame.maxX <= sx + 1)
                 }) else { break }
                 let to = placement[it.key] == "panel" ? CGPoint(x: sx - 6, y: it.frame.midY) : CGPoint(x: tx + 6, y: it.frame.midY)
-                Bar.cmdDrag(from: CGPoint(x: it.frame.midX, y: it.frame.midY), to: to)
+                // First try goes to Control Centre's process (no cursor jump); if the item didn't move, do it system-wide.
+                let n = tries[it.key, default: 0]; tries[it.key] = n + 1
+                if n >= 3 { continue }
+                Bar.cmdDrag(from: CGPoint(x: it.frame.midX, y: it.frame.midY), to: to, pid: n == 0 ? Bar.ccPid : nil)
                 try? await Task.sleep(for: .milliseconds(500))
             }
             await snapshot(); collapse(); busy = false
@@ -428,6 +435,23 @@ final class Panel: NSPanel {
             // Restarting Control Centre re-reads it for Apple's icons at once; third-party icons follow at their next launch / your next login.
             Bar.shell("/usr/bin/killall", "ControlCenter")
             Task { @MainActor in try? await Task.sleep(for: .seconds(2)); await refresh() }
+        }
+    }
+    // Quit + reopen every app that owns a third-party icon so it re-reads the bar spacing (what a log-out would do).
+    func relaunchIconApps() {
+        let skip: Set<String> = ["com.apple.controlcenter", "com.apple.TextInputMenuAgent", ""]
+        let bundles = Set(items.filter { !$0.isApple }.map(\.bundleID)).subtracting(skip)
+        Task { @MainActor in
+            for b in bundles {
+                guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: b).first, let url = app.bundleURL else { continue }
+                app.terminate()
+                for _ in 0..<20 where !app.isTerminated { try? await Task.sleep(for: .milliseconds(250)) }
+                if !app.isTerminated { app.forceTerminate() }
+                let c = NSWorkspace.OpenConfiguration(); c.activates = false
+                NSWorkspace.shared.openApplication(at: url, configuration: c)
+            }
+            Bar.shell("/usr/bin/killall", "TextInputMenuAgent")   // Apple's keyboard "A" — it comes back by itself
+            try? await Task.sleep(for: .seconds(4)); await refresh()
         }
     }
     func setApple(_ key: String, shown: Bool) {
@@ -500,7 +524,7 @@ struct SettingsView: View {
                 Text(draft < 0 ? "system" : "\(Int(draft)) pt").frame(width: 50, alignment: .leading)
                 Button("System") { draft = -1; app.barGap = -1 }.font(.caption)
                 Spacer()
-                Text("Apple icons: now · others: after log out/in").font(.caption).foregroundStyle(.secondary)
+                Button("Relaunch icon apps") { app.relaunchIconApps() }.help("Third-party icons only pick the spacing up when their app restarts. This quits and reopens them (a log-out does the same).")
             }.padding(.bottom, 6)
             HStack {
                 Text("Panel gap").foregroundStyle(.secondary)
