@@ -69,14 +69,19 @@ enum Shell {
     // MARK: spacers - empty items you Cmd-drag between two icons. Widths persist; positions persist via autosave.
     var spacers: [NSStatusItem] = []
     var spacerWidths: [Int] { get { UserDefaults.standard.array(forKey: "spacers") as? [Int] ?? [] } set { UserDefaults.standard.set(newValue, forKey: "spacers") } }
-    var showSpacers: Bool { get { UserDefaults.standard.object(forKey: "showSpacers") as? Bool ?? true } set { UserDefaults.standard.set(newValue, forKey: "showSpacers"); for sp in spacers { sp.button?.title = newValue ? "⋮" : "" } } }
+    // While shown, a spacer is at least 14 pt wide with a ⋮ marker so it can be grabbed; hidden, it is its true width.
+    var showSpacers: Bool { get { UserDefaults.standard.object(forKey: "showSpacers") as? Bool ?? true } set { UserDefaults.standard.set(newValue, forKey: "showSpacers"); for (i, sp) in spacers.enumerated() { dress(sp, spacerWidths[i]) } } }
+    func dress(_ sp: NSStatusItem, _ w: Int) {
+        sp.length = showSpacers ? max(CGFloat(w), 14) : CGFloat(w)
+        sp.button?.title = showSpacers ? "⋮" : ""
+    }
     func makeSpacer(_ i: Int, _ w: Int) {
         let name = "nook.spacer.\(i)"
         if UserDefaults.standard.object(forKey: "NSStatusItem Preferred Position \(name)") == nil { UserDefaults.standard.set(300, forKey: "NSStatusItem Preferred Position \(name)") }
         let sp = NSStatusBar.system.statusItem(withLength: CGFloat(w))
         sp.autosaveName = name
-        sp.button?.title = showSpacers ? "⋮" : ""
-        sp.button?.font = .systemFont(ofSize: 9); sp.button?.alphaValue = 0.45
+        sp.button?.font = .systemFont(ofSize: 11); sp.button?.alphaValue = 0.6
+        dress(sp, w)
         spacers.append(sp)
     }
     @objc func addSpacer(_ m: NSMenuItem) { spacerWidths.append(m.tag); makeSpacer(spacers.count, m.tag) }
@@ -175,7 +180,7 @@ extension App: NSMenuDelegate {
             ss.addItem(.separator())
             for (i, w) in spacerWidths.enumerated() { let a = NSMenuItem(title: "Remove spacer \(i + 1) (\(w) pt)", action: #selector(removeSpacer(_:)), keyEquivalent: ""); a.target = self; a.tag = i; ss.addItem(a) }
             ss.addItem(.separator())
-            let v = NSMenuItem(title: "Show spacers (⋮) to drag them", action: #selector(toggleShowSpacers), keyEquivalent: ""); v.target = self
+            let v = NSMenuItem(title: "Show spacers as ⋮ to drag them (untick when placed)", action: #selector(toggleShowSpacers), keyEquivalent: ""); v.target = self
             v.state = showSpacers ? .on : .off; ss.addItem(v)
         }
         let sItem = NSMenuItem(title: "Spacers", action: nil, keyEquivalent: ""); sItem.submenu = ss; menu.addItem(sItem)
