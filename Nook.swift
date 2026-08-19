@@ -25,6 +25,8 @@ enum Shell {
     }
 
     func applicationDidFinishLaunching(_: Notification) {
+        // A new status item lands at the far LEFT of the cluster - under the notch on a full bar. Ask for a spot near Wi-Fi.
+        if UserDefaults.standard.object(forKey: "NSStatusItem Preferred Position nook") == nil { UserDefaults.standard.set(300, forKey: "NSStatusItem Preferred Position nook") }
         item.autosaveName = "nook"
         item.button?.image = NSImage(systemSymbolName: "arrow.left.and.right.square", accessibilityDescription: "Nook")
         item.menu = NSMenu(); item.menu?.delegate = self
