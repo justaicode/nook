@@ -20,6 +20,16 @@ swiftc -O -target arm64-apple-macosx14.0 \
 swiftc -O -target arm64-apple-macosx14.0 -framework AppKit -o "$APP/Contents/MacOS/NookSpacer" NookSpacer.swift
 echo "built $(du -h "$APP/Contents/MacOS/Nook" | cut -f1) + spacer helper"
 
+# Icon: assets/icon/make-icon.swift draws the 1024 PNG (regenerable, gitignored), iconutil wants every size.
+SRC=assets/icon/nook-1024.png
+[ -f "$SRC" ] || (cd assets/icon && swift make-icon.swift >/dev/null)
+mkdir -p "$APP/Contents/Resources" build/nook.iconset
+for s in 16 32 64 128 256 512; do
+  sips -z $s $s "$SRC" --out "build/nook.iconset/icon_${s}x${s}.png" >/dev/null
+  sips -z $((s*2)) $((s*2)) "$SRC" --out "build/nook.iconset/icon_${s}x${s}@2x.png" >/dev/null
+done
+iconutil -c icns build/nook.iconset -o "$APP/Contents/Resources/Nook.icns" && rm -rf build/nook.iconset && echo "icon"
+
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -28,6 +38,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleName</key><string>Nook</string>
   <key>CFBundleIdentifier</key><string>com.justaicode.nook</string>
   <key>CFBundleExecutable</key><string>Nook</string>
+  <key>CFBundleIconFile</key><string>Nook</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>CFBundleVersion</key><string>1</string>
