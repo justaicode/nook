@@ -6,6 +6,7 @@
 // Needs Accessibility once, to find which apps own menu-bar icons.
 
 import AppKit
+import ServiceManagement
 
 enum Shell {
     @discardableResult static func run(_ args: String...) -> String {
@@ -54,15 +55,44 @@ enum Shell {
         }
     }
 
+    @objc func toggleLogin() {
+        if SMAppService.mainApp.status == .enabled { try? SMAppService.mainApp.unregister() } else { try? SMAppService.mainApp.register() }
+    }
+
+    // Apple's icons: `defaults -currentHost write com.apple.controlcenter <Key> -int 2|8` + restart Control Centre.
+    // Shown = a Control Centre window with that name exists (needs Screen Recording; granted).
+    static let appleKeys = [("WiFi", "Wi‑Fi"), ("Bluetooth", "Bluetooth"), ("Battery", "Battery"), ("Sound", "Sound"),
+                            ("NowPlaying", "Now Playing"), ("ScreenMirroring", "Screen Mirroring"), ("Display", "Display"),
+                            ("FocusModes", "Focus"), ("UserSwitcher", "Fast User Switching"), ("AirDrop", "AirDrop"),
+                            ("KeyboardBrightness", "Keyboard Brightness"), ("Hearing", "Hearing"),
+                            ("AccessibilityShortcuts", "Accessibility Shortcuts"), ("StageManager", "Stage Manager"), ("Weather", "Weather")]
+    func shownAppleNames() -> Set<String> {
+        guard let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] else { return [] }
+        return Set(list.compactMap { w in
+            (w[kCGWindowLayer as String] as? Int) == 25 && (w[kCGWindowOwnerName as String] as? String)?.hasPrefix("Control Cent") == true
+                ? w[kCGWindowName as String] as? String : nil
+        })
+    }
+    @objc func toggleApple(_ m: NSMenuItem) {
+        let key = App.appleKeys[m.tag].0
+        Shell.run("/usr/bin/defaults", "-currentHost", "write", "com.apple.controlcenter", key, "-int", m.state == .on ? "8" : "2")
+        Shell.run("/usr/bin/killall", "ControlCenter")
+    }
+
     @objc func relaunch() {
         Task { @MainActor in
             for app in iconApps() {
-                guard let url = app.bundleURL else { continue }
+                guard let url = app.bundleURL, let bid = app.bundleIdentifier else { continue }
                 app.terminate()
                 for _ in 0..<20 where !app.isTerminated { try? await Task.sleep(for: .milliseconds(250)) }
                 if !app.isTerminated { app.forceTerminate() }
-                let c = NSWorkspace.OpenConfiguration(); c.activates = false
-                _ = try? await NSWorkspace.shared.openApplication(at: url, configuration: c)
+                // Login-item helpers (iStat Menus Status...) are brought back by launchd on their own; opening them
+                // ourselves too gives two copies and double icons. Wait 5 s, reopen only if nothing came back.
+                for _ in 0..<20 where NSRunningApplication.runningApplications(withBundleIdentifier: bid).isEmpty { try? await Task.sleep(for: .milliseconds(250)) }
+                if NSRunningApplication.runningApplications(withBundleIdentifier: bid).isEmpty {
+                    let c = NSWorkspace.OpenConfiguration(); c.activates = false
+                    _ = try? await NSWorkspace.shared.openApplication(at: url, configuration: c)
+                }
             }
             Shell.run("/usr/bin/killall", "TextInputMenuAgent")   // the keyboard "A"; launchd brings it back
         }
@@ -85,6 +115,16 @@ extension App: NSMenuDelegate {
         r.toolTip = "Third-party icons only pick the gap up when their app restarts. Quits and reopens them."
         menu.addItem(r)
         menu.addItem(.separator())
+        let shown = shownAppleNames()
+        let sub = NSMenu()
+        for (i, (key, label)) in App.appleKeys.enumerated() {
+            let a = NSMenuItem(title: label, action: #selector(toggleApple(_:)), keyEquivalent: ""); a.target = self; a.tag = i
+            a.state = shown.contains(key) ? .on : .off; sub.addItem(a)
+        }
+        let appleItem = NSMenuItem(title: "Apple icons", action: nil, keyEquivalent: ""); appleItem.submenu = sub; menu.addItem(appleItem)
+        menu.addItem(.separator())
+        let login = NSMenuItem(title: "Start at login", action: #selector(toggleLogin), keyEquivalent: ""); login.target = self
+        login.state = SMAppService.mainApp.status == .enabled ? .on : .off; menu.addItem(login)
         menu.addItem(withTitle: "Quit Nook", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     }
 }
