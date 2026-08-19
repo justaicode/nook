@@ -17,7 +17,8 @@ rm -rf build && mkdir -p "$APP/Contents/MacOS"
 swiftc -O -target arm64-apple-macosx14.0 \
   -framework AppKit -framework ServiceManagement \
   -o "$APP/Contents/MacOS/Nook" Nook.swift
-echo "built $(du -h "$APP/Contents/MacOS/Nook" | cut -f1)"
+swiftc -O -target arm64-apple-macosx14.0 -framework AppKit -o "$APP/Contents/MacOS/NookSpacer" NookSpacer.swift
+echo "built $(du -h "$APP/Contents/MacOS/Nook" | cut -f1) + spacer helper"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

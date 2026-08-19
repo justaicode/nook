@@ -31,14 +31,17 @@ enum Shell {
         item.button?.image = NSImage(systemSymbolName: "arrow.left.and.right.text.vertical", accessibilityDescription: "Nook")
             ?? NSImage(systemSymbolName: "arrow.left.and.line.vertical.and.arrow.right", accessibilityDescription: "Nook")
         item.menu = NSMenu(); item.menu?.delegate = self
-        for (i, w) in spacerWidths.enumerated() { makeSpacer(i, w) }
+        try? FileManager.default.createDirectory(at: App.spacerDir, withIntermediateDirectories: true)
+        showSpacers = showSpacers      // writes the flag file for helpers
+        spacerTick()
+        Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in Task { @MainActor in self?.spacerTick() } }
         // Seed a spot near Wi-Fi; a brand-new item otherwise lands leftmost, under the notch.
         if UserDefaults.standard.object(forKey: "NSStatusItem Preferred Position nook") == nil { UserDefaults.standard.set(300, forKey: "NSStatusItem Preferred Position nook") }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(2))
             parkedCheck()
             Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in Task { @MainActor in self?.parkedCheck() } }
-            let line = "[\(Date())] nook visible=\(item.isVisible) frame=\(item.button?.window?.frame ?? .zero) len=\(item.length) spacers=\(spacers.map { "\($0.isVisible) \($0.button?.window?.frame ?? .zero)" })\n"
+            let line = "[\(Date())] nook visible=\(item.isVisible) frame=\(item.button?.window?.frame ?? .zero) spacers=\(spacerBundles.count)\n"
             let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Nook.log")
             if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); h.closeFile() } else { try? line.write(to: url, atomically: true, encoding: .utf8) }
         }
@@ -68,43 +71,52 @@ enum Shell {
         }
     }
 
-    // MARK: spacers - empty items you Cmd-drag between two icons. Widths persist; positions persist via autosave.
-    var spacers: [NSStatusItem] = []
-    var spacerWidths: [Int] { get { UserDefaults.standard.array(forKey: "spacers") as? [Int] ?? [] } set { UserDefaults.standard.set(newValue, forKey: "spacers") } }
-    // While shown, a spacer is at least 14 pt wide with a ⋮ marker so it can be grabbed; hidden, it is its true width.
-    var showSpacers: Bool { get { UserDefaults.standard.object(forKey: "showSpacers") as? Bool ?? true } set { UserDefaults.standard.set(newValue, forKey: "showSpacers"); for (i, sp) in spacers.enumerated() { dress(sp, spacerWidths[i]) } } }
-    func dress(_ sp: NSStatusItem, _ w: Int) {
-        let shownW = max(CGFloat(w), 14)
-        sp.length = showSpacers ? shownW : CGFloat(w)
-        // A faint block of "white space" you can grab; nothing at all once hidden.
-        sp.button?.image = showSpacers ? NSImage(size: NSSize(width: shownW - 2, height: 16), flipped: false) { r in
-            NSColor.white.withAlphaComponent(0.35).setFill(); NSBezierPath(roundedRect: r, xRadius: 3, yRadius: 3).fill(); return true
-        } : nil
-        sp.button?.image?.isTemplate = false
-        sp.button?.alphaValue = showSpacers ? 1 : 0      // hidden = fully transparent, just the gap
+    // MARK: spacers - each one is its own tiny app (see NookSpacer.swift), stamped into Application Support.
+    static let spacerDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Nook")
+    var spacerBundles: [URL] {
+        ((try? FileManager.default.contentsOfDirectory(at: App.spacerDir, includingPropertiesForKeys: [.creationDateKey])) ?? [])
+            .filter { $0.pathExtension == "app" }
+            .sorted { ((try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast) < ((try? $1.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast) }
     }
-    func makeSpacer(_ i: Int, _ w: Int) {
-        let name = "nook.spacer.\(i)"
-        if UserDefaults.standard.object(forKey: "NSStatusItem Preferred Position \(name)") == nil { UserDefaults.standard.set(300, forKey: "NSStatusItem Preferred Position \(name)") }
-        let sp = NSStatusBar.system.statusItem(withLength: CGFloat(w))
-        sp.autosaveName = name
-        dress(sp, w)
-        spacers.append(sp)
+    func spacerWidth(_ url: URL) -> Int { (NSDictionary(contentsOf: url.appendingPathComponent("Contents/Info.plist"))?["NookWidth"] as? Int) ?? 0 }
+    func spacerBundleID(_ url: URL) -> String { "com.justaicode.nook.spacer." + url.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "Spacer-", with: "") }
+    var showSpacers: Bool { get { UserDefaults.standard.object(forKey: "showSpacers") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "showSpacers")
+              let flag = App.spacerDir.appendingPathComponent("show")      // helpers read this at launch
+              if newValue { try? "1".write(to: flag, atomically: true, encoding: .utf8) } else { try? FileManager.default.removeItem(at: flag) }
+              DistributedNotificationCenter.default().postNotificationName(Notification.Name("com.justaicode.nook.spacers"), object: newValue ? "1" : "0", userInfo: nil, deliverImmediately: true) } }
+    @objc func addSpacer(_ m: NSMenuItem) {
+        let id = UUID().uuidString.lowercased().prefix(8)
+        let bundle = App.spacerDir.appendingPathComponent("Spacer-\(id).app")
+        let macos = bundle.appendingPathComponent("Contents/MacOS")
+        try? FileManager.default.createDirectory(at: macos, withIntermediateDirectories: true)
+        try? FileManager.default.copyItem(at: Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/NookSpacer"), to: macos.appendingPathComponent("NookSpacer"))
+        let plist: [String: Any] = ["CFBundleIdentifier": "com.justaicode.nook.spacer.\(id)", "CFBundleExecutable": "NookSpacer", "CFBundleName": "Nook spacer",
+                                    "CFBundlePackageType": "APPL", "LSUIElement": true, "NookWidth": m.tag]
+        (plist as NSDictionary).write(to: bundle.appendingPathComponent("Contents/Info.plist"), atomically: true)
+        Shell.run("/usr/bin/codesign", "-fs", "-", bundle.path)
+        launchSpacer(bundle)
     }
-    @objc func addSpacer(_ m: NSMenuItem) { spacerWidths.append(m.tag); makeSpacer(spacers.count, m.tag) }
+    func launchSpacer(_ url: URL) {
+        let c = NSWorkspace.OpenConfiguration(); c.activates = false
+        NSWorkspace.shared.openApplication(at: url, configuration: c) { _, _ in }
+    }
     @objc func removeSpacer(_ m: NSMenuItem) {
-        // Heads-up for him: Cmd-dragging an item OUT of the bar hides that app system-wide on macOS 26
-        // (System Settings > Menu Bar). Spacers use a distinct autosave name per index so macOS remembers each.
-        // Drop everything and rebuild, so autosave names stay 0..n-1 and positions of the others survive.
-        var ws = spacerWidths; ws.remove(at: m.tag)
-        for sp in spacers { NSStatusBar.system.removeStatusItem(sp) }; spacers = []
-        spacerWidths = ws
-        for (i, w) in ws.enumerated() { makeSpacer(i, w) }
+        let url = spacerBundles[m.tag]
+        NSRunningApplication.runningApplications(withBundleIdentifier: spacerBundleID(url)).forEach { $0.terminate() }
+        try? FileManager.default.removeItem(at: url)
+    }
+    // Every 3 s: a spacer that was dragged out left a "removed" note => forget it; one that is not running => start it.
+    func spacerTick() {
+        for url in spacerBundles {
+            if FileManager.default.fileExists(atPath: url.appendingPathComponent("removed").path) { try? FileManager.default.removeItem(at: url); continue }
+            if NSRunningApplication.runningApplications(withBundleIdentifier: spacerBundleID(url)).isEmpty { launchSpacer(url) }
+        }
     }
     @objc func toggleShowSpacers() { showSpacers.toggle() }
 
     // macOS 26 hides an app's icons system-wide when one is dragged down out of the bar; the window then sits at y < 0.
-    // Nothing in a plist to flip, so tell him where the switch is.
+    // Nothing in a plist to flip, so tell him where the switch is. Once per occurrence.
     var warned = false
     func parkedCheck() {
         let parked = (item.button?.window?.frame.minY ?? 0) < 0
@@ -113,14 +125,17 @@ enum Shell {
         warned = true
         let a = NSAlert()
         a.messageText = "Nook's icon is hidden by macOS"
-        a.informativeText = "macOS hides an app's icons when one of them is dragged down out of the menu bar. Turn Nook back on under System Settings → Menu Bar. To remove a spacer, use Nook's menu instead of dragging."
+        a.informativeText = "macOS hides an app's icons when one of them is dragged down out of the menu bar. Turn Nook back on under System Settings → Menu Bar."
         a.addButton(withTitle: "Open System Settings"); a.addButton(withTitle: "Later")
         NSApp.activate(ignoringOtherApps: true)
         if a.runModal() == .alertFirstButtonReturn {
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension")!)
         }
     }
-
+    @objc func quit() {
+        for url in spacerBundles { NSRunningApplication.runningApplications(withBundleIdentifier: spacerBundleID(url)).forEach { $0.terminate() } }
+        NSApp.terminate(nil)
+    }
     @objc func toggleLogin() {
         if SMAppService.mainApp.status == .enabled { try? SMAppService.mainApp.unregister() } else { try? SMAppService.mainApp.register() }
     }
@@ -201,9 +216,10 @@ extension App: NSMenuDelegate {
         menu.addItem(.separator())
         let ss = NSMenu()
         for w in [1, 2, 4, 8, 16, 24, 40] { let a = NSMenuItem(title: "Add \(w) pt spacer", action: #selector(addSpacer(_:)), keyEquivalent: ""); a.target = self; a.tag = w; ss.addItem(a) }
-        if !spacers.isEmpty {
+        let bundles = spacerBundles
+        if !bundles.isEmpty {
             ss.addItem(.separator())
-            for (i, w) in spacerWidths.enumerated() { let a = NSMenuItem(title: "Remove spacer \(i + 1) (\(w) pt)", action: #selector(removeSpacer(_:)), keyEquivalent: ""); a.target = self; a.tag = i; ss.addItem(a) }
+            for (i, u) in bundles.enumerated() { let a = NSMenuItem(title: "Remove spacer \(i + 1) (\(spacerWidth(u)) pt)", action: #selector(removeSpacer(_:)), keyEquivalent: ""); a.target = self; a.tag = i; ss.addItem(a) }
             ss.addItem(.separator())
             let v = NSMenuItem(title: "Show spacers to drag them (untick when placed)", action: #selector(toggleShowSpacers), keyEquivalent: ""); v.target = self
             v.state = showSpacers ? .on : .off; ss.addItem(v)
@@ -220,7 +236,7 @@ extension App: NSMenuDelegate {
         menu.addItem(.separator())
         let login = NSMenuItem(title: "Start at login", action: #selector(toggleLogin), keyEquivalent: ""); login.target = self
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off; menu.addItem(login)
-        menu.addItem(withTitle: "Quit Nook", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(withTitle: "Quit Nook", action: #selector(quit), keyEquivalent: "q").target = self
     }
 }
 
