@@ -27,12 +27,19 @@ enum Shell {
 
     func applicationDidFinishLaunching(_: Notification) {
         // A new status item lands at the far LEFT of the cluster - under the notch on a full bar. Ask for a spot near Wi-Fi.
-        if UserDefaults.standard.object(forKey: "NSStatusItem Preferred Position nook") == nil { UserDefaults.standard.set(300, forKey: "NSStatusItem Preferred Position nook") }
         item.autosaveName = "nook"
         item.button?.image = NSImage(systemSymbolName: "distribute.horizontal.center", accessibilityDescription: "Nook")
             ?? NSImage(systemSymbolName: "arrow.left.and.line.vertical.and.arrow.right", accessibilityDescription: "Nook")
         item.menu = NSMenu(); item.menu?.delegate = self
         for (i, w) in spacerWidths.enumerated() { makeSpacer(i, w) }
+        // Seed a spot near Wi-Fi; a brand-new item otherwise lands leftmost, under the notch.
+        if UserDefaults.standard.object(forKey: "NSStatusItem Preferred Position nook") == nil { UserDefaults.standard.set(300, forKey: "NSStatusItem Preferred Position nook") }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let line = "[\(Date())] nook visible=\(item.isVisible) frame=\(item.button?.window?.frame ?? .zero) len=\(item.length) spacers=\(spacers.map { "\($0.isVisible) \($0.button?.window?.frame ?? .zero)" })\n"
+            let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Nook.log")
+            if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); h.closeFile() } else { try? line.write(to: url, atomically: true, encoding: .utf8) }
+        }
         _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary)
     }
 
@@ -74,6 +81,8 @@ enum Shell {
     }
     @objc func addSpacer(_ m: NSMenuItem) { spacerWidths.append(m.tag); makeSpacer(spacers.count, m.tag) }
     @objc func removeSpacer(_ m: NSMenuItem) {
+        // Heads-up for him: Cmd-dragging an item OUT of the bar hides that app system-wide on macOS 26
+        // (System Settings > Menu Bar). Spacers use a distinct autosave name per index so macOS remembers each.
         // Drop everything and rebuild, so autosave names stay 0..n-1 and positions of the others survive.
         var ws = spacerWidths; ws.remove(at: m.tag)
         for sp in spacers { NSStatusBar.system.removeStatusItem(sp) }; spacers = []
@@ -161,7 +170,7 @@ extension App: NSMenuDelegate {
         let r = NSMenuItem(title: "Relaunch a menu-bar utility", action: nil, keyEquivalent: ""); r.submenu = rs; menu.addItem(r)
         menu.addItem(.separator())
         let ss = NSMenu()
-        for w in [8, 16, 24, 40] { let a = NSMenuItem(title: "Add \(w) pt spacer", action: #selector(addSpacer(_:)), keyEquivalent: ""); a.target = self; a.tag = w; ss.addItem(a) }
+        for w in [2, 4, 8, 16, 24, 40] { let a = NSMenuItem(title: "Add \(w) pt spacer", action: #selector(addSpacer(_:)), keyEquivalent: ""); a.target = self; a.tag = w; ss.addItem(a) }
         if !spacers.isEmpty {
             ss.addItem(.separator())
             for (i, w) in spacerWidths.enumerated() { let a = NSMenuItem(title: "Remove spacer \(i + 1) (\(w) pt)", action: #selector(removeSpacer(_:)), keyEquivalent: ""); a.target = self; a.tag = i; ss.addItem(a) }
