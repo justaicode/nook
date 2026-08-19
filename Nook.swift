@@ -15,16 +15,28 @@ import SwiftUI
 import ScreenCaptureKit
 
 // MARK: - one status-bar window, as seen by CGWindowList
+// macOS 26 hosts EVERY status item in a Control Centre window named after the item's autosave name
+// ("WiFi", "com.bjango.istatmenus.cpu", "Item-0"...). The owning app is found by matching x against
+// each app's Accessibility "extras menu bar" children.
 struct BarItem: Identifiable {
-    let id: CGWindowID, pid: pid_t, owner: String, bundleID: String?, name: String
+    let id: CGWindowID, name: String
     let frame: CGRect       // CG coordinates: origin top-left, so y == 0 is the menu bar
     let onScreen: Bool
-    var key: String { "\(bundleID ?? owner)|\(name)" }
-    var isCC: Bool { bundleID == "com.apple.controlcenter" }   // Apple's cluster: hide via defaults, not drag
-    var label: String { name.isEmpty || name.hasPrefix("Item-") ? owner : "\(owner) — \(name)" }
+    var owner = "", bundleID = "", title = ""
+    var ax: AXUIElement?    // the app's own button, for AXPress when the icon is out of reach
+    var key: String { "\(bundleID.isEmpty ? "cc" : bundleID)|\(name)" }
+    var isApple: Bool { Bar.appleNames.contains(name) || name.hasPrefix("BentoBox") }   // hide via defaults, not drag
+    var label: String {
+        let base = owner.isEmpty ? name : owner
+        return title.isEmpty || title == base ? base : "\(base) — \(title)"
+    }
 }
 
 enum Bar {
+    static let ours: Set<String> = ["nook.spacer", "nook.toggle"]
+    static let appleNames: Set<String> = ["WiFi", "Bluetooth", "Battery", "Sound", "NowPlaying", "ScreenMirroring", "Display", "FocusModes",
+                                          "UserSwitcher", "AirDrop", "KeyboardBrightness", "Hearing", "AccessibilityShortcuts", "StageManager",
+                                          "Weather", "Clock", "Siri", "Spotlight", "MusicRecognition", "VPN", "TimeMachine"]
     static func items() -> [BarItem] {
         guard let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] else { return [] }
         let me = getpid()
@@ -36,14 +48,60 @@ enum Bar {
                   let b = w[kCGWindowBounds as String] as? NSDictionary,
                   let f = CGRect(dictionaryRepresentation: b as CFDictionary),
                   f.minY == 0, f.height <= 40, f.width < 2000 else { continue }
-            let app = NSRunningApplication(processIdentifier: pid)
-            out.append(BarItem(id: id, pid: pid,
-                               owner: w[kCGWindowOwnerName as String] as? String ?? app?.localizedName ?? "?",
-                               bundleID: app?.bundleIdentifier,
-                               name: w[kCGWindowName as String] as? String ?? "",
-                               frame: f, onScreen: w[kCGWindowIsOnscreen as String] as? Bool ?? false))
+            let name = w[kCGWindowName as String] as? String ?? ""
+            if ours.contains(name) { continue }
+            out.append(BarItem(id: id, name: name, frame: f, onScreen: w[kCGWindowIsOnscreen as String] as? Bool ?? false))
         }
-        return out.sorted { $0.frame.minX < $1.frame.minX }
+        out.sort { $0.frame.minX < $1.frame.minX }
+        let ax = axItems()
+        for i in out.indices {
+            let x = out[i].frame.minX
+            if let m = ax.min(by: { abs($0.x - x) < abs($1.x - x) }), abs(m.x - x) < 24 {
+                out[i].owner = m.app; out[i].bundleID = m.bundle; out[i].title = m.title; out[i].ax = m.el
+            }
+        }
+        return out
+    }
+
+    // Every running app's status items via Accessibility: x position + app name + title.
+    struct AXItem { let x: CGFloat, app: String, bundle: String, title: String, el: AXUIElement }
+    static func axItems() -> [AXItem] {
+        guard AXIsProcessTrusted() else { return [] }
+        var out: [AXItem] = []
+        for app in NSWorkspace.shared.runningApplications where app.processIdentifier != getpid() {
+            let el = AXUIElementCreateApplication(app.processIdentifier)
+            AXUIElementSetMessagingTimeout(el, 0.2)
+            var bar: AnyObject?
+            guard AXUIElementCopyAttributeValue(el, kAXExtrasMenuBarAttribute as CFString, &bar) == .success, let barEl = bar else { continue }
+            var kids: AnyObject?
+            guard AXUIElementCopyAttributeValue(barEl as! AXUIElement, kAXChildrenAttribute as CFString, &kids) == .success,
+                  let arr = kids as? [AXUIElement] else { continue }
+            for k in arr {
+                var pos: AnyObject?, title: AnyObject?, desc: AnyObject?
+                AXUIElementCopyAttributeValue(k, kAXPositionAttribute as CFString, &pos)
+                AXUIElementCopyAttributeValue(k, kAXTitleAttribute as CFString, &title)
+                AXUIElementCopyAttributeValue(k, kAXDescriptionAttribute as CFString, &desc)
+                var p = CGPoint.zero
+                if let pos { AXValueGetValue(pos as! AXValue, .cgPoint, &p) }
+                out.append(AXItem(x: p.x, app: app.localizedName ?? "?", bundle: app.bundleIdentifier ?? "",
+                                  title: (title as? String) ?? (desc as? String) ?? "", el: k))
+            }
+        }
+        return out
+    }
+
+    // Where the frontmost app's last menu title ends (AppKit x). The panel must not cross it.
+    static func menuTitlesRightEdge() -> CGFloat {
+        guard AXIsProcessTrusted(), let app = NSWorkspace.shared.frontmostApplication else { return 0 }
+        let el = AXUIElementCreateApplication(app.processIdentifier); AXUIElementSetMessagingTimeout(el, 0.2)
+        var mb: AnyObject?, kids: AnyObject?, pos: AnyObject?, size: AnyObject?
+        guard AXUIElementCopyAttributeValue(el, kAXMenuBarAttribute as CFString, &mb) == .success, let bar = mb,
+              AXUIElementCopyAttributeValue(bar as! AXUIElement, kAXChildrenAttribute as CFString, &kids) == .success,
+              let arr = kids as? [AXUIElement], let last = arr.last else { return 0 }
+        var p = CGPoint.zero, sz = CGSize.zero
+        if AXUIElementCopyAttributeValue(last, kAXPositionAttribute as CFString, &pos) == .success, let pos { AXValueGetValue(pos as! AXValue, .cgPoint, &p) }
+        if AXUIElementCopyAttributeValue(last, kAXSizeAttribute as CFString, &size) == .success, let size { AXValueGetValue(size as! AXValue, .cgSize, &sz) }
+        return p.x + sz.width
     }
 
     // The window server's "Menubar" window is off screen while a full-screen app is in front.
@@ -109,7 +167,10 @@ enum Capture {
 // MARK: - the panel left of the notch
 final class Panel: NSPanel {
     var onClick: ((String) -> Void)?
+    var onRightClick: (() -> Void)?
+    var onOverflow: (() -> Void)?
     private let stack = NSStackView()
+    override func rightMouseDown(with event: NSEvent) { onRightClick?() }
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 10, height: 10), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         level = .statusBar; isOpaque = false; backgroundColor = .clear; hasShadow = false
@@ -127,15 +188,26 @@ final class Panel: NSPanel {
     override var canBecomeKey: Bool { false }
 
     // Lays out the buttons and returns the panel width. Height == menu bar height, images are 1:1.
-    func render(_ items: [BarItem], images: [CGWindowID: NSImage], gap: CGFloat, height: CGFloat) -> CGFloat {
+    func render(_ all: [BarItem], images: [CGWindowID: NSImage], gap: CGFloat, height: CGFloat, maxWidth: CGFloat) -> CGFloat {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         stack.spacing = gap; stack.edgeInsets = NSEdgeInsets(top: 0, left: 4, bottom: 0, right: 4)
+        // Drop icons from the LEFT until the strip fits; the dropped ones become a "+N" button.
+        var items = all
+        func need(_ xs: [BarItem], extra: CGFloat) -> CGFloat { 8 + extra + xs.reduce(0) { $0 + (images[$1.id]?.size.width ?? 26) } + gap * CGFloat(max(0, xs.count - (extra > 0 ? 0 : 1))) }
+        while !items.isEmpty && need(items, extra: items.count < all.count ? 28 : 0) > maxWidth { items.removeFirst() }
         var width: CGFloat = 8
+        if items.count < all.count {
+            let more = NSButton(title: "+\(all.count - items.count)", target: self, action: #selector(overflow))
+            more.isBordered = false; more.font = .systemFont(ofSize: 11, weight: .medium); more.contentTintColor = .white
+            more.translatesAutoresizingMaskIntoConstraints = false
+            more.widthAnchor.constraint(equalToConstant: 28).isActive = true
+            stack.addArrangedSubview(more); width += 28 + gap
+        }
         for it in items {
             let b = NSButton(title: "", target: self, action: #selector(hit(_:)))
             b.isBordered = false; b.identifier = NSUserInterfaceItemIdentifier(it.key); b.toolTip = it.label
             if let img = images[it.id] { b.image = img; b.imageScaling = .scaleNone }
-            else if let icon = NSRunningApplication(processIdentifier: it.pid)?.icon { icon.size = NSSize(width: 18, height: 18); b.image = icon; b.imageScaling = .scaleNone }
+            else if let icon = NSRunningApplication.runningApplications(withBundleIdentifier: it.bundleID).first?.icon { icon.size = NSSize(width: 18, height: 18); b.image = icon; b.imageScaling = .scaleNone }
             let w = images[it.id]?.size.width ?? 26
             b.translatesAutoresizingMaskIntoConstraints = false
             b.widthAnchor.constraint(equalToConstant: w).isActive = true
@@ -147,6 +219,7 @@ final class Panel: NSPanel {
         return width
     }
     @objc private func hit(_ b: NSButton) { onClick?(b.identifier?.rawValue ?? "") }
+    @objc private func overflow() { onOverflow?() }
 }
 
 // MARK: - the app
@@ -185,6 +258,11 @@ final class Panel: NSPanel {
         toggle.button?.target = self; toggle.button?.action = #selector(toggleClicked)
         toggle.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         panel.onClick = { [weak self] key in self?.activate(key) }
+        panel.onRightClick = { [weak self] in self?.showMenu() }
+        panel.onOverflow = { [weak self] in self?.expand() }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in try? await Task.sleep(for: .milliseconds(150)); self?.renderPanel() }
+        }
         checkPermissions(prompt: true)
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.renderPanel() }
@@ -196,15 +274,24 @@ final class Panel: NSPanel {
         Task { try? await Task.sleep(for: .seconds(1)); await refresh() }
     }
 
+    // Debug trail at ~/Library/Logs/Nook.log: our two frames + every bar window. Read it when the bar looks wrong.
+    func dump(_ now: [BarItem]) {
+        var s = "\n[\(Date())] ax=\(axOK) screen=\(screenOK) expanded=\(expanded) toggle=\(toggle.button?.window?.frame ?? .zero) spacer=\(spacer.button?.window?.frame ?? .zero)\n"
+        for i in now { s += "  \(Int(i.frame.minX))+\(Int(i.frame.width)) on=\(i.onScreen) '\(i.name)' -> \(i.label) [\(i.bundleID)]\n" }
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Nook.log")
+        if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(s.data(using: .utf8)!); h.closeFile() }
+        else { try? s.write(to: url, atomically: true, encoding: .utf8) }
+    }
     func checkPermissions(prompt: Bool) {
         axOK = prompt ? AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary) : AXIsProcessTrusted()
         screenOK = prompt ? CGRequestScreenCaptureAccess() : CGPreflightScreenCaptureAccess()
     }
 
-    var seconds = 0
+    var seconds = 0, menuEdge: CGFloat = 0
     func tick() {
         seconds += 1
         panelVisibility()
+        if seconds % 2 == 0, !expanded, Bar.menuTitlesRightEdge() != menuEdge { renderPanel() }   // the front app's menus changed
         if settingsWin?.isVisible == true, seconds % 2 == 0 { checkPermissions(prompt: false) }
     }
 
@@ -227,8 +314,9 @@ final class Panel: NSPanel {
     func snapshot() async {
         let now = Bar.items()
         let sx = spacer.button?.window?.frame.minX ?? 0
+        dump(now)
         items = now; spacerX = sx
-        hidden = now.filter { !$0.isCC && $0.onScreen && $0.frame.maxX <= sx + 1 }
+        hidden = now.filter { !$0.isApple && $0.frame.maxX <= sx + 1 }
         let fresh = await Capture.images(for: hidden)
         for (k, v) in fresh { images[k] = v }
     }
@@ -276,10 +364,11 @@ final class Panel: NSPanel {
     func renderPanel() {
         guard let s = NSScreen.screens.first else { return }
         let h = barHeight(s)
-        let w = panel.render(hidden, images: images, gap: gap, height: h)
         let right: CGFloat, top: CGFloat
         if let notch = s.auxiliaryTopLeftArea { right = notch.maxX - 8; top = notch.maxY }
         else { right = (toggle.button?.window?.frame.minX ?? s.frame.midX) - 8; top = s.frame.maxY }
+        menuEdge = Bar.menuTitlesRightEdge()
+        let w = panel.render(hidden, images: images, gap: gap, height: h, maxWidth: right - menuEdge - 12)
         panel.setFrame(NSRect(x: right - w, y: top - h, width: w, height: h), display: true)
         panelVisibility()
     }
@@ -296,7 +385,10 @@ final class Panel: NSPanel {
             busy = true; awaitingClick = true; expand()
             try? await Task.sleep(for: .milliseconds(400))
             let now = Bar.items(); items = now
-            if let it = now.first(where: { $0.key == key && $0.onScreen }) { Bar.click(CGPoint(x: it.frame.midX, y: it.frame.midY)) }
+            if let it = now.first(where: { $0.key == key }) {
+                if it.onScreen { Bar.click(CGPoint(x: it.frame.midX, y: it.frame.midY)) }
+                else if let ax = it.ax { AXUIElementPerformAction(ax, kAXPressAction as CFString) }   // under the notch: ask the app directly
+            }
             busy = false
         }
     }
@@ -313,7 +405,7 @@ final class Panel: NSPanel {
                 let now = Bar.items()
                 let sx = spacer.button?.window?.frame.minX ?? 0, tx = toggle.button?.window?.frame.maxX ?? 0
                 guard let it = now.first(where: { i in
-                    guard !i.isCC, i.onScreen, let want = placement[i.key] else { return false }
+                    guard !i.isApple, i.onScreen, let want = placement[i.key] else { return false }
                     return (want == "panel") != (i.frame.maxX <= sx + 1)
                 }) else { break }
                 let to = placement[it.key] == "panel" ? CGPoint(x: sx - 6, y: it.frame.midY) : CGPoint(x: tx + 6, y: it.frame.midY)
@@ -321,6 +413,21 @@ final class Panel: NSPanel {
                 try? await Task.sleep(for: .milliseconds(500))
             }
             await snapshot(); collapse(); busy = false
+        }
+    }
+    // Spacing of the REAL bar: two hidden global defaults macOS reads at login. 0 = system default (about 16).
+    @Published var barGap: Double = {
+        let v = Bar.shell("/usr/bin/defaults", "-currentHost", "read", "-globalDomain", "NSStatusItemSpacing").trimmingCharacters(in: .whitespacesAndNewlines)
+        return Double(v) ?? 0
+    }() {
+        didSet {
+            for k in ["NSStatusItemSpacing", "NSStatusItemSelectionPadding"] {
+                if barGap == 0 { Bar.shell("/usr/bin/defaults", "-currentHost", "delete", "-globalDomain", k) }
+                else { Bar.shell("/usr/bin/defaults", "-currentHost", "write", "-globalDomain", k, "-int", String(Int(barGap))) }
+            }
+            // Restarting Control Centre re-reads it for Apple's icons at once; third-party icons follow at their next launch / your next login.
+            Bar.shell("/usr/bin/killall", "ControlCenter")
+            Task { @MainActor in try? await Task.sleep(for: .seconds(2)); await refresh() }
         }
     }
     func setApple(_ key: String, shown: Bool) {
@@ -331,17 +438,18 @@ final class Panel: NSPanel {
 
     // MARK: toggle item
     @objc func toggleClicked() {
-        if NSApp.currentEvent?.type == .rightMouseUp {
+        if NSApp.currentEvent?.type == .rightMouseUp { showMenu(); return }
+        if expanded { Task { await finish() } } else { expand() }
+    }
+    func showMenu() {
             let m = NSMenu()
             m.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
             m.addItem(withTitle: "Re-apply order", action: #selector(reapply), keyEquivalent: "").target = self
             m.addItem(withTitle: "Refresh panel", action: #selector(refreshNow), keyEquivalent: "").target = self
             m.addItem(.separator())
             m.addItem(withTitle: "Quit Nook", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-            toggle.menu = m; toggle.button?.performClick(nil); toggle.menu = nil
-            return
-        }
-        if expanded { Task { await finish() } } else { expand() }
+            NSApp.activate(ignoringOtherApps: true)
+            m.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
     @objc func reapply() { apply() }
     @objc func refreshNow() { Task { await refresh() } }
@@ -361,13 +469,14 @@ final class Panel: NSPanel {
 // MARK: - settings window
 struct SettingsView: View {
     @ObservedObject var app: App
+    @State private var draft: Double = 0
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if !app.axOK { banner("Accessibility permission missing", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") }
             if app.misordered { Text("The gap sits right of ‹ — Cmd-drag ‹ to the right of it, then Refresh panel.").padding(8).background(Color.yellow.opacity(0.18)).cornerRadius(8).padding(.bottom, 6) }
             if !app.screenOK { banner("Screen Recording permission missing", "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") }
             section("Third-party icons")
-            ForEach(app.items.filter { !$0.isCC }) { it in
+            ForEach(app.items.filter { !$0.isApple }) { it in
                 row(it.label) {
                     Picker("", selection: Binding(get: { app.placement[it.key] ?? (it.frame.maxX <= app.spacerX + 1 ? "panel" : "bar") },
                                                   set: { app.setPlacement(it.key, $0) })) {
@@ -377,7 +486,7 @@ struct SettingsView: View {
             }
             section("Apple icons")
             ForEach(App.appleKeys, id: \.0) { key, label in
-                let shown = app.items.contains { $0.isCC && ($0.name == key || $0.name.hasPrefix(key + "-")) }
+                let shown = app.items.contains { $0.isApple && ($0.name == key || $0.name.hasPrefix(key + "-")) }
                 row(label) {
                     Picker("", selection: Binding(get: { shown }, set: { app.setApple(key, shown: $0) })) {
                         Text("Show").tag(true); Text("Hide").tag(false)
@@ -386,6 +495,13 @@ struct SettingsView: View {
             }
             Divider().padding(.vertical, 8)
             HStack {
+                Text("Bar spacing").foregroundStyle(.secondary)
+                Slider(value: $draft, in: 0...16, step: 1, onEditingChanged: { if !$0 { app.barGap = draft } }).frame(width: 140)
+                Text(draft == 0 ? "system" : "\(Int(draft)) pt").frame(width: 50, alignment: .leading)
+                Spacer()
+                Text("Apple icons: now · others: after log out/in").font(.caption).foregroundStyle(.secondary)
+            }.padding(.bottom, 6)
+            HStack {
                 Text("Panel gap").foregroundStyle(.secondary)
                 Slider(value: $app.gap, in: 0...16, step: 1).frame(width: 140)
                 Spacer()
@@ -393,6 +509,7 @@ struct SettingsView: View {
             }
         }
         .padding(16).frame(width: 440)
+        .onAppear { draft = app.barGap }
     }
     func section(_ t: String) -> some View { Text(t).font(.caption).foregroundStyle(.secondary).padding(.top, 10).padding(.bottom, 4) }
     func row<C: View>(_ label: String, @ViewBuilder _ c: () -> C) -> some View {
