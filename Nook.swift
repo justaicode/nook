@@ -107,7 +107,20 @@ enum Shell {
         try? FileManager.default.removeItem(at: url)
     }
     // Every 3 s: a spacer that was dragged out left a "removed" note => forget it; one that is not running => start it.
+    // A spacer dragged out of the bar loses its Control Centre window entirely (an overflowed one keeps it off
+    // screen), and its helper only notices at launch. So: fewer "spacer" windows than helpers, twice in a row
+    // => restart the helpers; the dragged-out one writes "removed" and quits, and we delete it below.
+    var spacerMismatch = 0
     func spacerTick() {
+        let running = spacerBundles.filter { !NSRunningApplication.runningApplications(withBundleIdentifier: spacerBundleID($0)).isEmpty }
+        let windows = ((CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]]) ?? [])
+            .filter { ($0[kCGWindowLayer as String] as? Int) == 25 && ($0[kCGWindowName as String] as? String) == "spacer" }.count
+        spacerMismatch = windows < running.count ? spacerMismatch + 1 : 0
+        if spacerMismatch >= 2 {
+            spacerMismatch = 0
+            for url in running { NSRunningApplication.runningApplications(withBundleIdentifier: spacerBundleID(url)).forEach { $0.terminate() } }
+            return   // next tick relaunches them; the parked one removes itself
+        }
         for url in spacerBundles {
             if FileManager.default.fileExists(atPath: url.appendingPathComponent("removed").path) { try? FileManager.default.removeItem(at: url); continue }
             if NSRunningApplication.runningApplications(withBundleIdentifier: spacerBundleID(url)).isEmpty { launchSpacer(url) }

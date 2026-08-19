@@ -28,6 +28,7 @@ DistributedNotificationCenter.default().addObserver(forName: Notification.Name("
 // Dragged out of the bar => macOS parks the window below the screen. Leave a note for Nook and quit.
 var parkedTicks = 0
 Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { _ in
+    // Only reliable at launch (the frame is not updated live); Nook restarts the helpers when a spacer window vanishes.
     parkedTicks = (item.button?.window?.frame.minY ?? 0) < 0 ? parkedTicks + 1 : 0
     if parkedTicks >= 3 {
         try? "removed".write(to: Bundle.main.bundleURL.appendingPathComponent("removed"), atomically: true, encoding: .utf8)
