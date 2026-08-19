@@ -28,7 +28,7 @@ enum Shell {
     func applicationDidFinishLaunching(_: Notification) {
         // A new status item lands at the far LEFT of the cluster - under the notch on a full bar. Ask for a spot near Wi-Fi.
         item.autosaveName = "nook"
-        item.button?.image = NSImage(systemSymbolName: "distribute.horizontal.center", accessibilityDescription: "Nook")
+        item.button?.image = NSImage(systemSymbolName: "arrow.left.and.right.text.vertical", accessibilityDescription: "Nook")
             ?? NSImage(systemSymbolName: "arrow.left.and.line.vertical.and.arrow.right", accessibilityDescription: "Nook")
         item.menu = NSMenu(); item.menu?.delegate = self
         for (i, w) in spacerWidths.enumerated() { makeSpacer(i, w) }
