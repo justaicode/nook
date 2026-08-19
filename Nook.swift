@@ -81,6 +81,7 @@ enum Shell {
             NSColor.white.withAlphaComponent(0.35).setFill(); NSBezierPath(roundedRect: r, xRadius: 3, yRadius: 3).fill(); return true
         } : nil
         sp.button?.image?.isTemplate = false
+        sp.button?.alphaValue = showSpacers ? 1 : 0      // hidden = fully transparent, just the gap
     }
     func makeSpacer(_ i: Int, _ w: Int) {
         let name = "nook.spacer.\(i)"
@@ -199,7 +200,7 @@ extension App: NSMenuDelegate {
         let r = NSMenuItem(title: "Relaunch a menu-bar utility", action: nil, keyEquivalent: ""); r.submenu = rs; menu.addItem(r)
         menu.addItem(.separator())
         let ss = NSMenu()
-        for w in [2, 4, 8, 16, 24, 40] { let a = NSMenuItem(title: "Add \(w) pt spacer", action: #selector(addSpacer(_:)), keyEquivalent: ""); a.target = self; a.tag = w; ss.addItem(a) }
+        for w in [1, 2, 4, 8, 16, 24, 40] { let a = NSMenuItem(title: "Add \(w) pt spacer", action: #selector(addSpacer(_:)), keyEquivalent: ""); a.target = self; a.tag = w; ss.addItem(a) }
         if !spacers.isEmpty {
             ss.addItem(.separator())
             for (i, w) in spacerWidths.enumerated() { let a = NSMenuItem(title: "Remove spacer \(i + 1) (\(w) pt)", action: #selector(removeSpacer(_:)), keyEquivalent: ""); a.target = self; a.tag = i; ss.addItem(a) }
