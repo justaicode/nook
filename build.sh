@@ -15,7 +15,7 @@ IDENTITY="Apple Development: Roberto Zanon (5P2HM5SHVL)"
 
 rm -rf build && mkdir -p "$APP/Contents/MacOS"
 swiftc -O -target arm64-apple-macosx14.0 \
-  -framework AppKit -framework SwiftUI -framework ScreenCaptureKit \
+  -framework AppKit \
   -o "$APP/Contents/MacOS/Nook" Nook.swift
 echo "built $(du -h "$APP/Contents/MacOS/Nook" | cut -f1)"
 
