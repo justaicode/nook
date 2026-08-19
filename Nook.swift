@@ -29,8 +29,10 @@ enum Shell {
         // A new status item lands at the far LEFT of the cluster - under the notch on a full bar. Ask for a spot near Wi-Fi.
         if UserDefaults.standard.object(forKey: "NSStatusItem Preferred Position nook") == nil { UserDefaults.standard.set(300, forKey: "NSStatusItem Preferred Position nook") }
         item.autosaveName = "nook"
-        item.button?.image = NSImage(systemSymbolName: "arrow.left.and.right.square", accessibilityDescription: "Nook")
+        item.button?.image = NSImage(systemSymbolName: "distribute.horizontal.center", accessibilityDescription: "Nook")
+            ?? NSImage(systemSymbolName: "arrow.left.and.line.vertical.and.arrow.right", accessibilityDescription: "Nook")
         item.menu = NSMenu(); item.menu?.delegate = self
+        for (i, w) in spacerWidths.enumerated() { makeSpacer(i, w) }
         _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary)
     }
 
@@ -56,6 +58,29 @@ enum Shell {
             return !((kids as? [AXUIElement]) ?? []).isEmpty
         }
     }
+
+    // MARK: spacers - empty items you Cmd-drag between two icons. Widths persist; positions persist via autosave.
+    var spacers: [NSStatusItem] = []
+    var spacerWidths: [Int] { get { UserDefaults.standard.array(forKey: "spacers") as? [Int] ?? [] } set { UserDefaults.standard.set(newValue, forKey: "spacers") } }
+    var showSpacers: Bool { get { UserDefaults.standard.object(forKey: "showSpacers") as? Bool ?? true } set { UserDefaults.standard.set(newValue, forKey: "showSpacers"); for sp in spacers { sp.button?.title = newValue ? "⋮" : "" } } }
+    func makeSpacer(_ i: Int, _ w: Int) {
+        let name = "nook.spacer.\(i)"
+        if UserDefaults.standard.object(forKey: "NSStatusItem Preferred Position \(name)") == nil { UserDefaults.standard.set(300, forKey: "NSStatusItem Preferred Position \(name)") }
+        let sp = NSStatusBar.system.statusItem(withLength: CGFloat(w))
+        sp.autosaveName = name
+        sp.button?.title = showSpacers ? "⋮" : ""
+        sp.button?.font = .systemFont(ofSize: 9); sp.button?.alphaValue = 0.45
+        spacers.append(sp)
+    }
+    @objc func addSpacer(_ m: NSMenuItem) { spacerWidths.append(m.tag); makeSpacer(spacers.count, m.tag) }
+    @objc func removeSpacer(_ m: NSMenuItem) {
+        // Drop everything and rebuild, so autosave names stay 0..n-1 and positions of the others survive.
+        var ws = spacerWidths; ws.remove(at: m.tag)
+        for sp in spacers { NSStatusBar.system.removeStatusItem(sp) }; spacers = []
+        spacerWidths = ws
+        for (i, w) in ws.enumerated() { makeSpacer(i, w) }
+    }
+    @objc func toggleShowSpacers() { showSpacers.toggle() }
 
     @objc func toggleLogin() {
         if SMAppService.mainApp.status == .enabled { try? SMAppService.mainApp.unregister() } else { try? SMAppService.mainApp.register() }
@@ -134,6 +159,17 @@ extension App: NSMenuDelegate {
         rs.addItem(.separator())
         rs.addItem(withTitle: "All of the above", action: #selector(relaunchAll), keyEquivalent: "").target = self
         let r = NSMenuItem(title: "Relaunch a menu-bar utility", action: nil, keyEquivalent: ""); r.submenu = rs; menu.addItem(r)
+        menu.addItem(.separator())
+        let ss = NSMenu()
+        for w in [8, 16, 24, 40] { let a = NSMenuItem(title: "Add \(w) pt spacer", action: #selector(addSpacer(_:)), keyEquivalent: ""); a.target = self; a.tag = w; ss.addItem(a) }
+        if !spacers.isEmpty {
+            ss.addItem(.separator())
+            for (i, w) in spacerWidths.enumerated() { let a = NSMenuItem(title: "Remove spacer \(i + 1) (\(w) pt)", action: #selector(removeSpacer(_:)), keyEquivalent: ""); a.target = self; a.tag = i; ss.addItem(a) }
+            ss.addItem(.separator())
+            let v = NSMenuItem(title: "Show spacers (⋮) to drag them", action: #selector(toggleShowSpacers), keyEquivalent: ""); v.target = self
+            v.state = showSpacers ? .on : .off; ss.addItem(v)
+        }
+        let sItem = NSMenuItem(title: "Spacers", action: nil, keyEquivalent: ""); sItem.submenu = ss; menu.addItem(sItem)
         menu.addItem(.separator())
         let shown = shownAppleNames()
         let sub = NSMenu()
