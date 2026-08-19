@@ -24,10 +24,13 @@ struct BarItem: Identifiable {
     let onScreen: Bool
     var owner = "", bundleID = "", title = ""
     var ax: AXUIElement?    // the app's own button, for AXPress when the icon is out of reach
+    var pid: pid_t = 0      // the owning app
     var key: String { "\(bundleID.isEmpty ? "cc" : bundleID)|\(name)" }
     var isApple: Bool { Bar.appleNames.contains(name) || name.hasPrefix("BentoBox") }   // hide via defaults, not drag
     var label: String {
         let base = owner.isEmpty ? name : owner
+        // "com.bjango.istatmenus.network" -> "network"; apps with several icons all carry the same AX title.
+        if name.contains("."), !name.hasPrefix("Item-") { return "\(base) · \(name.split(separator: ".").last.map(String.init) ?? name)" }
         return title.isEmpty || title == base ? base : "\(base) — \(title)"
     }
 }
@@ -57,14 +60,21 @@ enum Bar {
         for i in out.indices {
             let x = out[i].frame.minX
             if let m = ax.min(by: { abs($0.x - x) < abs($1.x - x) }), abs(m.x - x) < 24 {
-                out[i].owner = m.app; out[i].bundleID = m.bundle; out[i].title = m.title; out[i].ax = m.el
+                out[i].owner = m.app; out[i].bundleID = m.bundle; out[i].title = m.title; out[i].ax = m.el; out[i].pid = m.pid
             }
         }
-        return out
+        // One row per key: a just-moved icon can briefly have two windows. Keep the on-screen one.
+        var seen: [String: Int] = [:]
+        var dedup: [BarItem] = []
+        for i in out {
+            if let j = seen[i.key] { if i.onScreen && !dedup[j].onScreen { dedup[j] = i } }
+            else { seen[i.key] = dedup.count; dedup.append(i) }
+        }
+        return dedup
     }
 
     // Every running app's status items via Accessibility: x position + app name + title.
-    struct AXItem { let x: CGFloat, app: String, bundle: String, title: String, el: AXUIElement }
+    struct AXItem { let x: CGFloat, app: String, bundle: String, title: String, el: AXUIElement, pid: pid_t }
     static func axItems() -> [AXItem] {
         guard AXIsProcessTrusted() else { return [] }
         var out: [AXItem] = []
@@ -84,7 +94,7 @@ enum Bar {
                 var p = CGPoint.zero
                 if let pos { AXValueGetValue(pos as! AXValue, .cgPoint, &p) }
                 out.append(AXItem(x: p.x, app: app.localizedName ?? "?", bundle: app.bundleIdentifier ?? "",
-                                  title: (title as? String) ?? (desc as? String) ?? "", el: k))
+                                  title: (title as? String) ?? (desc as? String) ?? "", el: k, pid: app.processIdentifier))
             }
         }
         return out
@@ -278,6 +288,12 @@ final class Panel: NSPanel {
     }
 
     // Debug trail at ~/Library/Logs/Nook.log: our two frames + every bar window. Read it when the bar looks wrong.
+    func log(_ line: String) {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Nook.log")
+        let s = "[\(Date())] \(line)\n"
+        if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(s.data(using: .utf8)!); h.closeFile() }
+        else { try? s.write(to: url, atomically: true, encoding: .utf8) }
+    }
     func dump(_ now: [BarItem]) {
         var s = "\n[\(Date())] ax=\(axOK) screen=\(screenOK) expanded=\(expanded) toggle=\(toggle.button?.window?.frame ?? .zero) spacer=\(spacer.button?.window?.frame ?? .zero)\n"
         for i in now { s += "  \(Int(i.frame.minX))+\(Int(i.frame.width)) on=\(i.onScreen) '\(i.name)' -> \(i.label) [\(i.bundleID)]\n" }
@@ -413,10 +429,12 @@ final class Panel: NSPanel {
                     return (want == "panel") != (i.frame.maxX <= sx + 1)
                 }) else { break }
                 let to = placement[it.key] == "panel" ? CGPoint(x: sx - 6, y: it.frame.midY) : CGPoint(x: tx + 6, y: it.frame.midY)
-                // First try goes to Control Centre's process (no cursor jump); if the item didn't move, do it system-wide.
+                // Try 0: Control Centre's process. Try 1: the icon's own app. Try 2: system-wide (moves the cursor). Logged.
                 let n = tries[it.key, default: 0]; tries[it.key] = n + 1
                 if n >= 3 { continue }
-                Bar.cmdDrag(from: CGPoint(x: it.frame.midX, y: it.frame.midY), to: to, pid: n == 0 ? Bar.ccPid : nil)
+                let pid: pid_t? = n == 0 ? Bar.ccPid : n == 1 ? (it.pid > 0 ? it.pid : nil) : nil
+                log("drag try \(n) \(it.label) via \(pid.map(String.init) ?? "HID") from \(Int(it.frame.midX)) to \(Int(to.x))")
+                Bar.cmdDrag(from: CGPoint(x: it.frame.midX, y: it.frame.midY), to: to, pid: pid)
                 try? await Task.sleep(for: .milliseconds(500))
             }
             await snapshot(); collapse(); busy = false
