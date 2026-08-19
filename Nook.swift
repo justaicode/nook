@@ -448,7 +448,7 @@ final class Panel: NSPanel {
                 for _ in 0..<20 where !app.isTerminated { try? await Task.sleep(for: .milliseconds(250)) }
                 if !app.isTerminated { app.forceTerminate() }
                 let c = NSWorkspace.OpenConfiguration(); c.activates = false
-                NSWorkspace.shared.openApplication(at: url, configuration: c)
+                _ = try? await NSWorkspace.shared.openApplication(at: url, configuration: c)
             }
             Bar.shell("/usr/bin/killall", "TextInputMenuAgent")   // Apple's keyboard "A" — it comes back by itself
             try? await Task.sleep(for: .seconds(4)); await refresh()
