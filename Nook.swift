@@ -90,6 +90,12 @@ enum Shell {
         Task { @MainActor in
             for app in apps {
                 guard let url = app.bundleURL, let bid = app.bundleIdentifier else { continue }
+                // Login items live under launchd (label == bundle id). Restart them THROUGH launchd, or we end up with
+                // two copies and double icons (iStat Menus Status, 19 Aug).
+                let job = "gui/\(getuid())/\(bid)"
+                if Shell.run("/bin/launchctl", "print", job).contains("state = running") {
+                    Shell.run("/bin/launchctl", "kickstart", "-k", job); continue
+                }
                 app.terminate()
                 for _ in 0..<20 where !app.isTerminated { try? await Task.sleep(for: .milliseconds(250)) }
                 if !app.isTerminated { app.forceTerminate() }
