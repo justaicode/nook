@@ -21,12 +21,12 @@ swiftc -O -target arm64-apple-macosx14.0 -framework AppKit -o "$APP/Contents/Mac
 echo "built $(du -h "$APP/Contents/MacOS/Nook" | cut -f1) + spacer helper"
 
 # Icon: assets/icon/make-icon.swift draws the glyph PNG (regenerable, gitignored); assets/icon/Nook.icon is the
-# Icon Composer package (tracked); actool (Xcode 26) compiles it to Assets.car + a legacy icns. Tahoe's Settings
+# Icon Composer package (tracked); actool (ABSOLUTE paths only, it crashes on relative ones) (Xcode 26) compiles it to Assets.car + a legacy icns. Tahoe's Settings
 # panes only show icons that come from Assets.car - a plain .icns stays the pale placeholder there.
 [ -f assets/icon/Nook.icon/Assets/glyph.png ] || (cd assets/icon && swift make-icon.swift >/dev/null)
 mkdir -p "$APP/Contents/Resources"
-xcrun actool assets/icon/Nook.icon --compile "$APP/Contents/Resources" --app-icon Nook --include-all-app-icons \
-  --platform macosx --minimum-deployment-target 26.0 --output-partial-info-plist build/icon.plist >/dev/null 2>&1 && echo "icon"
+xcrun actool "$PWD/assets/icon/Nook.icon" --compile "$PWD/$APP/Contents/Resources" --app-icon Nook --include-all-app-icons \
+  --platform macosx --minimum-deployment-target 26.0 --output-partial-info-plist "$PWD/build/icon.plist" >/dev/null 2>&1 && echo "icon"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
