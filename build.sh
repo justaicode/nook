@@ -56,4 +56,9 @@ codesign --force --deep --sign "$IDENTITY" "$APP" 2>/dev/null && echo "signed ($
 DEST="/Applications/Nook.app"
 if pgrep -x Nook >/dev/null; then pkill -x Nook; sleep 0.5; echo "quit the running copy"; fi
 rm -rf "$DEST"; ditto "$APP" "$DEST"; echo "installed $DEST"
+# Existing spacer helpers carry their own copy of NookSpacer: refresh them, Nook relaunches them within 3 s.
+for b in ~/Library/Application\ Support/Nook/Spacer-*.app; do
+  [ -d "$b" ] || continue
+  cp "$DEST/Contents/MacOS/NookSpacer" "$b/Contents/MacOS/NookSpacer"; codesign -fs - "$b" 2>/dev/null; pkill -f "$b" || true
+done
 [ "${1:-}" = "--run" ] && { open "$DEST"; echo "launched"; } || true
