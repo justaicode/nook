@@ -24,14 +24,19 @@ let rep = NSBitmapImageRep(data: img.tiffRepresentation!)!
 try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "nook-1024.png"))
 print("wrote nook-1024.png")
 
-// Tahoe: the same glyph alone, white on transparent, for the Icon Composer layer (Nook.icon/Assets/glyph.png)
+// Tahoe: the same glyph alone, white on transparent, for the Icon Composer layer (AppIcon.icon/Assets/glyph.png)
 let g = NSImage(size: NSSize(width: S, height: S))
 g.lockFocus()
-if let sym = NSImage(systemSymbolName: "arrow.left.and.right.text.vertical", accessibilityDescription: nil)?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 520, weight: .medium)) {
+// the icon runtime scales the layer's opaque CONTENT bounds up to a standard grid (transparent
+// margin cropped, icon.json scale + low-alpha washes ignored) - so pin the bounds to the full
+// canvas with opaque corner dots; the squircle mask clips the corners, they are never visible
+NSColor.white.setFill()
+for c in [(0,0),(S-8,0),(0,S-8),(S-8,S-8)] { NSBezierPath(rect: NSRect(x: c.0, y: c.1, width: 8, height: 8)).fill() }
+if let sym = NSImage(systemSymbolName: "arrow.left.and.right.text.vertical", accessibilityDescription: nil)?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 300, weight: .medium)) {
     let white = NSImage(size: sym.size, flipped: false) { r in sym.draw(in: r); NSColor.white.set(); r.fill(using: .sourceAtop); return true }
     white.draw(in: NSRect(x: (S - sym.size.width)/2, y: (S - sym.size.height)/2, width: sym.size.width, height: sym.size.height))
 }
 g.unlockFocus()
-try! FileManager.default.createDirectory(atPath: "Nook.icon/Assets", withIntermediateDirectories: true)
-try! NSBitmapImageRep(data: g.tiffRepresentation!)!.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "Nook.icon/Assets/glyph.png"))
-print("wrote Nook.icon/Assets/glyph.png")
+try! FileManager.default.createDirectory(atPath: "AppIcon.icon/Assets", withIntermediateDirectories: true)
+try! NSBitmapImageRep(data: g.tiffRepresentation!)!.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "AppIcon.icon/Assets/glyph.png"))
+print("wrote AppIcon.icon/Assets/glyph.png")
