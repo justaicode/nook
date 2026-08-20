@@ -1,17 +1,29 @@
 # Nook — backlog / handoff (2026-08-20)
 
 ## RESUME HERE
-Ship v0.1 as a notarized direct download (Mac App Store is impossible: sandbox blocks globalDomain
-defaults writes, killall ControlCenter, launchctl kickstart, AX, runtime-signed spacer helpers).
-`./build.sh --release` is wired and tested up to signing: Developer ID sign + hardened runtime →
-notarytool (ASC key KZA2V6P98G, ~/.appstoreconnect) → staple → build/Nook.zip. No install on purpose —
-/Applications stays on the Development identity so TCC grants survive.
-BLOCKED: no "Developer ID Application" cert in the keychain yet. He tried once in Xcode
-(Settings → Accounts → Manage Certificates… → + ) and it didn't appear — first check whether that
-menu even offers "Developer ID Application" (only the Account Holder can create it; he is one, but
-Xcode sometimes hides it). Fallback: create at developer.apple.com → Certificates → + → Developer ID
-Application (needs a CSR from Keychain Access → Certificate Assistant → Request a Certificate…),
-download, double-click to install, then `./build.sh --release` (~200 KB upload).
+**v0.1 is notarized and shipped-ready (20 Aug 2026): `build/Nook.zip`**, Gatekeeper-verified
+("accepted · Notarized Developer ID"). **DECIDED 20 Aug: distribute via GitHub release.**
+The repo has NO remote yet — next session: create the GitHub repo (release assets must be
+publicly downloadable; repo public or private is his call at creation), push, then
+`git tag v0.1 && gh release create v0.1 build/Nook.zip`. Note: `build/` is the freshly
+notarized artifact — do NOT rebuild before tagging (a rebuild re-signs and needs a fresh
+notarization round). /Applications still on the Development identity on purpose (TCC
+grants survive).
+
+Developer ID cert: SOLVED 20 Aug. Xcode's menu never offered it; the portal did — CSR generated
+with openssl (no Keychain Assistant needed), he logged in, the rest was driven in Chrome:
+Certificates → + → Developer ID Application → G2 Sub-CA → upload CSR. The cert was then pulled
+via the ASC API (GET /v1/certificates includes certificateContent; type is
+DEVELOPER_ID_APPLICATION_G2) and imported next to the openssl key with `security import`.
+Creating via the API directly is impossible — POST /v1/certificates returns 403 "Account Holder
+only" for Developer ID, for every key role. Identity: "Developer ID Application: Roberto Zanon
+(85LHNZC32T)", expires 2031-08-21, login keychain.
+
+Notarization gotchas (first submission took ~3 h in "In Progress" — normal for a brand-new
+Developer ID account): `notarytool --wait` died on a NSURLErrorDomain -1001 poll timeout after
+~1 h and build.sh's `| tail` masked the failure as exit 0 — staple+zip silently didn't run.
+If it happens again: `xcrun notarytool info <id>` and, once Accepted, staple+zip by hand
+(build.sh lines 65-66). Consider `set -o pipefail` in build.sh.
 
 Nook = one menu-bar icon → menu: gap between icons (0–16 pt, System), Apple icons show/hide,
 relaunch a menu-bar utility (so third-party icons pick the gap up), spacers, start at login, quit.
