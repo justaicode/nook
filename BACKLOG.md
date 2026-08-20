@@ -3,11 +3,9 @@
 ## RESUME HERE
 **v0.1 is notarized and shipped-ready (20 Aug 2026): `build/Nook.zip`**, Gatekeeper-verified
 ("accepted · Notarized Developer ID"). **DECIDED 20 Aug: distribute via GitHub release.**
-The repo has NO remote yet — next session: create the GitHub repo (release assets must be
-publicly downloadable; repo public or private is his call at creation), push, then
-`git tag v0.1 && gh release create v0.1 build/Nook.zip`. Note: `build/` is the freshly
-notarized artifact — do NOT rebuild before tagging (a rebuild re-signs and needs a fresh
-notarization round). /Applications still on the Development identity on purpose (TCC
+SHIPPED: public repo `justaicode/nook`, tag v0.1, zip attached —
+https://github.com/justaicode/nook/releases/tag/v0.1 (21 Aug 2026). Future releases: bump
+version, `./build.sh --release` (needs a full notarization round), tag, `gh release create`. /Applications still on the Development identity on purpose (TCC
 grants survive).
 
 Developer ID cert: SOLVED 20 Aug. Xcode's menu never offered it; the portal did — CSR generated
