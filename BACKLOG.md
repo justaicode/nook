@@ -1,4 +1,17 @@
-# Nook — backlog / handoff (2026-08-19)
+# Nook — backlog / handoff (2026-08-20)
+
+## RESUME HERE
+Ship v0.1 as a notarized direct download (Mac App Store is impossible: sandbox blocks globalDomain
+defaults writes, killall ControlCenter, launchctl kickstart, AX, runtime-signed spacer helpers).
+`./build.sh --release` is wired and tested up to signing: Developer ID sign + hardened runtime →
+notarytool (ASC key KZA2V6P98G, ~/.appstoreconnect) → staple → build/Nook.zip. No install on purpose —
+/Applications stays on the Development identity so TCC grants survive.
+BLOCKED: no "Developer ID Application" cert in the keychain yet. He tried once in Xcode
+(Settings → Accounts → Manage Certificates… → + ) and it didn't appear — first check whether that
+menu even offers "Developer ID Application" (only the Account Holder can create it; he is one, but
+Xcode sometimes hides it). Fallback: create at developer.apple.com → Certificates → + → Developer ID
+Application (needs a CSR from Keychain Access → Certificate Assistant → Request a Certificate…),
+download, double-click to install, then `./build.sh --release` (~200 KB upload).
 
 Nook = one menu-bar icon → menu: gap between icons (0–16 pt, System), Apple icons show/hide,
 relaunch a menu-bar utility (so third-party icons pick the gap up), spacers, start at login, quit.
