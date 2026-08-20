@@ -4,7 +4,7 @@
 **v0.1 is notarized and shipped-ready (20 Aug 2026): `build/Nook.zip`**, Gatekeeper-verified
 ("accepted · Notarized Developer ID"). **DECIDED 20 Aug: distribute via GitHub release.**
 SHIPPED: public repo `justaicode/nook`, tag v0.1, zip attached —
-https://github.com/justaicode/nook/releases/tag/v0.1 (21 Aug 2026). Future releases: bump
+https://github.com/justaicode/nook/releases/tag/v0.1 (20 Aug 2026). Future releases: bump
 version, `./build.sh --release` (needs a full notarization round), tag, `gh release create`. /Applications still on the Development identity on purpose (TCC
 grants survive).
 
